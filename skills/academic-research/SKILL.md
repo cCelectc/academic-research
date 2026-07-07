@@ -121,12 +121,12 @@ The output is a JSON object with these top-level keys:
 | Key | Contents |
 |-----|----------|
 | `metadata` | title, author, doi, year (extracted from PDF properties and first-page text) |
-| `full_text` | complete paper text as a single string |
-| `text_per_page` | dict mapping page number (string) to page text |
-| `sections` | array of `{title, page, start_line, end_line}` for each detected section |
-| `figures` | array of `{number, position}` for detected Figure references |
-| `tables` | array of `{number, position}` for detected Table references |
-| `equations` | array of `{number, position}` for detected Equation references |
+| `full_text` | complete paper text; paragraphs separated by `\n\n`, wrapped lines by `\n` |
+| `text_per_page` | dict mapping page number (string) to page text (same `\n\n`/`\n` formatting) |
+| `sections` | array of `{title, page, start_line, end_line, text, method}` for each detected section (`method` is `typographic`, `numbered`, or `fallback`; `text` uses the same `\n\n`/`\n` formatting) |
+| `figures` | array of `{number, position}` for detected Figure references (deduplicated by number) |
+| `tables` | array of `{number, position}` for detected Table references (deduplicated by number) |
+| `equations` | array of `{number, position}` for detected Equation references (deduplicated by number) |
 
 For specific pages or sections:
 
@@ -161,9 +161,9 @@ in the parsed JSON:
 
 | User says | How to locate |
 |-----------|--------------|
-| "page 3, paragraph 2" or "第3页第2段" | Read `text_per_page["3"]`, split by double-newline or sentence boundaries, return the paragraph at the given index (1-based) |
+| "page 3, paragraph 2" or "第3页第2段" | Read `text_per_page["3"]`, split with `.split("\n\n")`, return the paragraph at the given index (1-based) |
 | Pastes or quotes a sentence | Search `full_text` for the quoted substring, return the surrounding 3-5 sentences |
-| "Methodology, paragraph 3" or "Methodology 第3段" | Find the section whose title contains the name (substring, case-insensitive), split its text by paragraphs, return the Nth |
+| "Methodology, paragraph 3" or "Methodology 第3段" | Find the section whose title contains the name (substring, case-insensitive), split its `text` with `.split("\n\n")`, return the Nth paragraph |
 
 **Match your response language to the user's language.** If they write in Chinese,
 respond in Chinese. If they write in English, respond in English. If mixed, follow
@@ -205,8 +205,8 @@ All three scripts — `scripts/search.py`, `scripts/parse_pdf.py`, and
 time you run any of them:
 
 1. Checks if `uv` is available in PATH
-2. With uv: `uv venv .venv && uv pip install requests pypdf`
-3. Without uv: `python -m venv .venv && .venv/bin/pip install requests pypdf`
+2. With uv: `uv venv .venv && uv pip install --python .venv/bin/python requests pdfplumber`
+3. Without uv: `python -m venv .venv && .venv/bin/pip install requests pdfplumber`
 4. Re-executes itself with the venv Python
 
 Subsequent runs reuse the `.venv/` with zero overhead. No setup command needed.
