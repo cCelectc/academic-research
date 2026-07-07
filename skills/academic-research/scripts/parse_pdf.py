@@ -15,45 +15,51 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from statistics import median
 
 from _bootstrap import ensure_venv
 
 ensure_venv(__file__)
 
-from pypdf import PdfReader
+import pdfplumber
 
 
-# --- Section detection patterns ---
-SECTION_PATTERNS = [
-    re.compile(r"^\s*Abstract\s*$", re.IGNORECASE),
-    re.compile(
-        r"^\s*\d+[\.\s]+(?:Introduction|Related\s+Work|Background)\b", re.IGNORECASE
-    ),
-    re.compile(
-        r"^\s*\d+[\.\s]+(?:Method|Methods|Methodology|Approach|Architecture|"
-        r"Model|Proposed|Our\s+(?:Approach|Method|Model|Framework))",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^\s*\d+[\.\s]+(?:Experiment|Experiments|Evaluation|Results|"
-        r"Implementation|Training|Inference)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^\s*\d+[\.\s]+(?:Discussion|Analysis|Ablation|Case\s+Study|"
-        r"Qualitative|Quantitative)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^\s*\d+[\.\s]+(?:Conclusion|Conclusions|Future\s+Work|"
-        r"Summary|Limitations)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"^\s*References\s*$", re.IGNORECASE),
-    re.compile(r"^\s*\d+[\.\s]+([A-Z][\w\s\-]{3,})\s*$"),
-]
+# --- Section detection ---
+SECTION_NUMBER_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[.)]?\s+\S")
+SECTION_VOCAB = frozenset(
+    {
+        "abstract",
+        "introduction",
+        "related work",
+        "background",
+        "method",
+        "methods",
+        "methodology",
+        "approach",
+        "architecture",
+        "model",
+        "experiment",
+        "experiments",
+        "evaluation",
+        "results",
+        "implementation",
+        "discussion",
+        "analysis",
+        "ablation",
+        "conclusion",
+        "conclusions",
+        "future work",
+        "summary",
+        "limitations",
+        "references",
+        "acknowledgment",
+        "acknowledgments",
+        "appendix",
+    }
+)
 
 FIGURE_RE = re.compile(r"(?:Fig(?:ure)?\.?\s*(\d+))", re.IGNORECASE)
 TABLE_RE = re.compile(r"(?:Table\.?\s*(\d+))", re.IGNORECASE)
@@ -61,13 +67,34 @@ EQUATION_RE = re.compile(r"(?:Eq(?:uation)?\s*\(?\s*(\d+)\s*\)?)", re.IGNORECASE
 
 
 @dataclass
-class TextItem:
+class Word:
     text: str
     page: int
     x0: float
-    y0: float
     x1: float
-    y1: float
+    top: float
+    bottom: float
+    size: float
+    fontname: str
+
+
+@dataclass
+class Line:
+    text: str
+    page: int
+    x0: float
+    x1: float
+    top: float
+    bottom: float
+    size: float
+    fontname: str
+    spanning: bool = False
+
+
+@dataclass
+class Paragraph:
+    text: str
+    page: int
 
 
 @dataclass
@@ -77,6 +104,7 @@ class Section:
     start_line: int
     end_line: int
     text: str
+    method: str
 
 
 @dataclass
@@ -90,220 +118,353 @@ class PaperData:
     equations: list = field(default_factory=list)
 
 
-# --- Visitor for positional text extraction ---
+# --- Word extraction ---
 
 
-class _TextVisitor:
-    def __init__(self):
-        self.items = []
+def extract_page_words(page, page_num):
+    words = []
+    raw = page.extract_words(
+        x_tolerance=1.5,
+        y_tolerance=2,
+        keep_blank_chars=False,
+        use_text_flow=False,
+        extra_attrs=["size", "fontname"],
+    )
+    for w in raw:
+        text = str(w.get("text", "")).strip()
+        if not text:
+            continue
+        words.append(
+            Word(
+                text=text,
+                page=page_num,
+                x0=float(w["x0"]),
+                x1=float(w["x1"]),
+                top=float(w["top"]),
+                bottom=float(w["bottom"]),
+                size=float(w.get("size", 0.0) or 0.0),
+                fontname=str(w.get("fontname", "") or ""),
+            )
+        )
+    return words
 
-    def visitor_text(self, text, user_matrix, tm_matrix, font_dict, font_size):
-        stripped = text.strip()
-        if stripped:
-            self.items.append(
-                TextItem(
-                    text=stripped,
-                    page=0,
-                    x0=tm_matrix[4],
-                    y0=tm_matrix[5],
-                    x1=tm_matrix[4] + abs(tm_matrix[0]) * len(text),
-                    y1=tm_matrix[5] + tm_matrix[3],
+
+# --- Line grouping ---
+
+
+def cluster_rows(words, y_tol=3.0):
+    if not words:
+        return []
+
+    ordered = sorted(words, key=lambda w: (w.top, w.x0))
+    rows = []
+    current = [ordered[0]]
+    anchor_top = ordered[0].top
+    for w in ordered[1:]:
+        if abs(w.top - anchor_top) <= y_tol and w.page == current[0].page:
+            current.append(w)
+        else:
+            rows.append(current)
+            current = [w]
+            anchor_top = w.top
+    rows.append(current)
+    return rows
+
+
+def line_from_words(words):
+    group = sorted(words, key=lambda w: w.x0)
+    sizes = [w.size for w in group if w.size > 0]
+    fontnames = [w.fontname for w in group if w.fontname]
+    return Line(
+        text=" ".join(w.text for w in group),
+        page=group[0].page,
+        x0=min(w.x0 for w in group),
+        x1=max(w.x1 for w in group),
+        top=min(w.top for w in group),
+        bottom=max(w.bottom for w in group),
+        size=median(sizes) if sizes else 0.0,
+        fontname=Counter(fontnames).most_common(1)[0][0] if fontnames else "",
+    )
+
+
+def group_lines(words, y_tol=3.0):
+    return [line_from_words(row) for row in cluster_rows(words, y_tol)]
+
+
+# --- Column detection & ordering ---
+
+
+def detect_gutter(words, page_width):
+    rows = cluster_rows(words)
+    if len(rows) < 3 or page_width <= 0:
+        return None
+
+    min_gap = max(12.0, 0.03 * page_width)
+    lo, hi = 0.3 * page_width, 0.7 * page_width
+    centers = []
+    for row in rows:
+        row = sorted(row, key=lambda w: w.x0)
+        best_gap = 0.0
+        best_center = None
+        for prev, cur in zip(row, row[1:]):
+            gap = cur.x0 - prev.x1
+            center = (prev.x1 + cur.x0) / 2
+            if gap > best_gap and lo <= center <= hi and gap >= min_gap:
+                best_gap = gap
+                best_center = center
+        if best_center is not None:
+            centers.append(best_center)
+
+    if len(centers) >= max(3, int(0.3 * len(rows))):
+        return median(centers)
+    return None
+
+
+def order_lines(words, gutter, page_width):
+    if not words:
+        return []
+    if gutter is None:
+        return group_lines(words)
+
+    min_gap = max(12.0, 0.03 * page_width)
+    left = []
+    right = []
+    spanning = []
+    for row in cluster_rows(words):
+        row = sorted(row, key=lambda w: w.x0)
+        left_ws = [w for w in row if (w.x0 + w.x1) / 2 < gutter]
+        right_ws = [w for w in row if (w.x0 + w.x1) / 2 >= gutter]
+        if left_ws and right_ws:
+            crosses = any(w.x0 < gutter < w.x1 for w in row)
+            gap = min(w.x0 for w in right_ws) - max(w.x1 for w in left_ws)
+            if not crosses and gap >= min_gap:
+                left.append(line_from_words(left_ws))
+                right.append(line_from_words(right_ws))
+            else:
+                ln = line_from_words(row)
+                ln.spanning = True
+                spanning.append(ln)
+        elif left_ws:
+            left.append(line_from_words(left_ws))
+        else:
+            right.append(line_from_words(right_ws))
+
+    seps = sorted(spanning, key=lambda ln: ln.top)
+    result = []
+    prev_top = float("-inf")
+    for sep in seps + [None]:
+        band_hi = sep.top if sep is not None else float("inf")
+        band_left = sorted(
+            (ln for ln in left if prev_top <= ln.top < band_hi),
+            key=lambda ln: ln.top,
+        )
+        band_right = sorted(
+            (ln for ln in right if prev_top <= ln.top < band_hi),
+            key=lambda ln: ln.top,
+        )
+        result.extend(band_left)
+        result.extend(band_right)
+        if sep is not None:
+            result.append(sep)
+            prev_top = sep.top
+    return result
+
+
+def group_paragraphs(lines, gap_factor=1.5):
+    if not lines:
+        return []
+
+    gaps = [
+        lines[i].top - lines[i - 1].bottom
+        for i in range(1, len(lines))
+        if lines[i].top - lines[i - 1].bottom > 0
+    ]
+    median_gap = median(gaps) if gaps else 0.0
+    threshold = median_gap * gap_factor if median_gap > 0 else float("inf")
+
+    paragraphs = []
+    current = [lines[0]]
+    for i in range(1, len(lines)):
+        prev, cur = lines[i - 1], lines[i]
+        new_para = (
+            cur.top < prev.top
+            or (cur.top - prev.bottom) > threshold
+            or cur.page != prev.page
+        )
+        if new_para:
+            paragraphs.append(
+                Paragraph(
+                    text="\n".join(ln.text for ln in current), page=current[0].page
                 )
             )
-
-
-def extract_text_items(reader, pages_set):
-    items = []
-    for page_num in sorted(pages_set):
-        if page_num < 1 or page_num > len(reader.pages):
-            continue
-        page = reader.pages[page_num - 1]
-        try:
-            visitor = _TextVisitor()
-            page.extract_text(visitor_text=visitor)
-            for item in visitor.items:
-                item.page = page_num
-                items.append(item)
-        except Exception:
-            text = page.extract_text()
-            if text:
-                for line in text.split("\n"):
-                    stripped = line.strip()
-                    if stripped:
-                        items.append(
-                            TextItem(
-                                text=stripped,
-                                page=page_num,
-                                x0=0,
-                                y0=0,
-                                x1=0,
-                                y1=0,
-                            )
-                        )
-    return items
-
-
-# --- Column ordering ---
-
-
-def order_two_columns(items):
-    if not items:
-        return items
-
-    page_groups = {}
-    for item in items:
-        page_groups.setdefault(item.page, []).append(item)
-
-    ordered = []
-    for page_num in sorted(page_groups.keys()):
-        page_items = page_groups[page_num]
-
-        if not page_items:
-            continue
-
-        xs = [i.x0 for i in page_items if i.x0 > 0]
-        if not xs:
-            ordered.extend(page_items)
-            continue
-
-        page_width = max(i.x1 for i in page_items if i.x1 > 0)
-        if page_width < 100:
-            ordered.extend(page_items)
-            continue
-
-        mid_x = page_width / 2
-        left = [i for i in page_items if i.x1 > 0 and i.x1 <= mid_x]
-        right = [i for i in page_items if i.x0 > 0 and i.x0 >= mid_x]
-
-        if not left or not right:
-            ordered.extend(sorted(page_items, key=lambda i: (i.y0, i.x0), reverse=True))
-            continue
-
-        left.sort(key=lambda i: i.y0, reverse=True)
-        right.sort(key=lambda i: i.y0, reverse=True)
-
-        while left and right:
-            if left[-1].y0 >= right[-1].y0:
-                ordered.append(left.pop())
-            else:
-                ordered.append(right.pop())
-        ordered.extend(reversed(left))
-        ordered.extend(reversed(right))
-
-    return ordered
+            current = [cur]
+        else:
+            current.append(cur)
+    paragraphs.append(
+        Paragraph(text="\n".join(ln.text for ln in current), page=current[0].page)
+    )
+    return paragraphs
 
 
 # --- Section detection ---
 
 
-def is_section_header(text):
-    for pattern in SECTION_PATTERNS:
-        if pattern.match(text):
-            return True
-    return False
+def modal_size(lines):
+    weights = Counter()
+    for ln in lines:
+        if ln.size > 0:
+            weights[round(ln.size)] += len(ln.text)
+    if not weights:
+        return 0.0
+    return float(weights.most_common(1)[0][0])
 
 
-def detect_sections(items):
-    if not items:
+def fonts_uniform(lines):
+    sizes = {round(ln.size) for ln in lines if ln.size > 0}
+    bold = any(kw in ln.fontname.lower() for ln in lines for kw in ("bold", "black"))
+    return len(sizes) <= 1 and not bold
+
+
+def _strip_number(title):
+    return re.sub(r"^\s*(?:\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[.)]?\s+", "", title).strip()
+
+
+def classify_header(line, body_size, uniform):
+    text = line.text.strip()
+    wc = len(text.split())
+    score = 0
+    typo = False
+    num = False
+
+    if not uniform:
+        if body_size > 0 and line.size >= body_size * 1.15:
+            score += 2
+            typo = True
+        if any(k in line.fontname.lower() for k in ("bold", "black", "semibold")):
+            score += 2
+            typo = True
+    if SECTION_NUMBER_RE.match(text):
+        score += 2
+        num = True
+    if wc <= 10:
+        score += 1
+    if text.isupper() and wc <= 10:
+        score += 1
+
+    normalized = _strip_number(text).lower()
+    if normalized in SECTION_VOCAB or any(
+        normalized.startswith(v) for v in SECTION_VOCAB
+    ):
+        score += 1
+
+    is_header = score >= 3
+    if uniform:
+        method = "fallback"
+    elif typo:
+        method = "typographic"
+    elif num:
+        method = "numbered"
+    else:
+        method = "fallback"
+    return is_header, method
+
+
+def detect_sections(lines):
+    if not lines:
         return []
 
+    body = modal_size(lines)
+    uniform = fonts_uniform(lines)
+
+    headers = []
+    for idx, ln in enumerate(lines):
+        is_header, method = classify_header(ln, body, uniform)
+        if is_header:
+            headers.append((idx, method))
+
     sections = []
-    current_title = None
-    current_start = 0
-    current_page = items[0].page
-
-    for i, item in enumerate(items):
-        if is_section_header(item.text):
-            if current_title is not None and i > current_start:
-                section_text = " ".join(it.text for it in items[current_start:i])
-                sections.append(
-                    Section(
-                        title=current_title,
-                        page=current_page,
-                        start_line=current_start,
-                        end_line=i - 1,
-                        text=section_text,
-                    )
-                )
-            current_title = item.text.strip()
-            current_start = i
-            current_page = item.page
-
-    if current_title is not None and current_start < len(items):
-        section_text = " ".join(it.text for it in items[current_start:])
+    for h, (start, method) in enumerate(headers):
+        end = headers[h + 1][0] - 1 if h + 1 < len(headers) else len(lines) - 1
+        slice_lines = lines[start : end + 1]
+        text = "\n\n".join(p.text for p in group_paragraphs(slice_lines))
         sections.append(
             Section(
-                title=current_title,
-                page=current_page,
-                start_line=current_start,
-                end_line=len(items) - 1,
-                text=section_text,
+                title=lines[start].text.strip(),
+                page=lines[start].page,
+                start_line=start,
+                end_line=end,
+                text=text,
+                method=method,
             )
         )
-
     return sections
 
 
 # --- Figure / Table / Equation detection ---
 
 
-def detect_figures_tables(text):
-    figures = []
-    tables = []
-    for m in FIGURE_RE.finditer(text):
-        figures.append({"number": int(m.group(1)), "position": m.start()})
-    for m in TABLE_RE.finditer(text):
-        tables.append({"number": int(m.group(1)), "position": m.start()})
-    return figures, tables
+def detect_references(text):
+    def collect(regex):
+        seen = {}
+        for m in regex.finditer(text):
+            num = int(m.group(1))
+            if num not in seen:
+                seen[num] = m.start()
+        return [{"number": n, "position": seen[n]} for n in sorted(seen)]
 
-
-def detect_equations(text):
-    seen = set()
-    equations = []
-    for m in EQUATION_RE.finditer(text):
-        num = m.group(1)
-        if num not in seen:
-            seen.add(num)
-            equations.append({"number": int(num), "position": m.start()})
-    return equations
+    return collect(FIGURE_RE), collect(TABLE_RE), collect(EQUATION_RE)
 
 
 # --- Metadata ---
 
 
-def extract_metadata(reader):
-    meta = {}
-    pdf_meta = reader.metadata or {}
-    for key in ("/Title", "/Author", "/Creator", "/Producer", "/Subject"):
-        val = pdf_meta.get(key, "")
-        if val:
-            meta[key.lstrip("/").lower()] = str(val).strip()
+def extract_year(meta, first_text):
+    date = (
+        meta.get("CreationDate")
+        or meta.get("/CreationDate")
+        or meta.get("ModDate")
+        or meta.get("/ModDate")
+        or ""
+    )
+    m = re.search(r"(?:D:)?((?:19|20)\d{2})", str(date))
+    if m:
+        return int(m.group(1))
+    m = re.search(
+        r"(?:©|\(c\)|copyright)\s*((?:19|20)\d{2})", first_text, re.IGNORECASE
+    )
+    if m:
+        return int(m.group(1))
+    return None
 
-    first_text = ""
-    if reader.pages:
-        try:
-            first_text = reader.pages[0].extract_text() or ""
-        except Exception:
-            pass
+
+def extract_metadata(pdf, first_page_lines):
+    meta = {}
+    pdf_meta = pdf.metadata or {}
+    for key in ("Title", "Author", "Creator", "Producer", "Subject"):
+        val = pdf_meta.get(key) or pdf_meta.get("/" + key) or ""
+        if val:
+            meta[key.lower()] = str(val).strip()
+
+    first_text = " ".join(ln.text for ln in first_page_lines)
 
     doi_m = re.search(r"(?:doi|DOI)[:\s]*(10\.\d{4,}/[^\s]+)", first_text)
     if doi_m:
         meta["doi"] = doi_m.group(1)
 
-    year_m = re.search(r"(?:19|20)\d{2}", first_text[:500])
-    if year_m:
-        meta["year"] = int(year_m.group(0))
+    year = extract_year(pdf_meta, first_text)
+    if year is not None:
+        meta["year"] = year
 
-    if not meta.get("title"):
-        title_lines = []
-        for line in first_text.split("\n")[:15]:
-            stripped = line.strip()
-            if len(stripped) > 10:
-                title_lines.append(stripped)
-            if len(title_lines) >= 3:
-                break
-        if title_lines:
+    if not meta.get("title") and first_page_lines:
+        top_lines = [ln for ln in first_page_lines if ln.size > 0]
+        if top_lines:
+            max_size = max(ln.size for ln in top_lines)
+            title_lines = [
+                ln.text for ln in first_page_lines if abs(ln.size - max_size) < 0.5
+            ]
             meta["extracted_title"] = " ".join(title_lines[:3])
+        else:
+            meta["extracted_title"] = first_page_lines[0].text
 
     return meta
 
@@ -317,11 +478,17 @@ def parse_page_range(raw, total):
     pages = set()
     for part in raw.split(","):
         part = part.strip()
-        if "-" in part:
-            a, b = part.split("-", 1)
-            pages.update(range(int(a), int(b) + 1))
-        else:
-            pages.add(int(part))
+        try:
+            if "-" in part:
+                a, b = part.split("-", 1)
+                lo, hi = int(a), int(b)
+                if lo > hi:
+                    raise ValueError
+                pages.update(range(lo, hi + 1))
+            else:
+                pages.add(int(part))
+        except ValueError:
+            raise ValueError(f"invalid page range: {part!r}") from None
     return {p for p in pages if 1 <= p <= total}
 
 
@@ -343,45 +510,79 @@ def main():
         print(f"Error: File not found: {args.pdf}", file=sys.stderr)
         sys.exit(1)
 
-    reader = PdfReader(str(pdf_path))
-    total = len(reader.pages)
+    try:
+        pdf = pdfplumber.open(str(pdf_path))
+    except Exception as e:
+        print(f"Error: cannot open PDF: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    metadata = extract_metadata(reader)
+    with pdf:
+        total = len(pdf.pages)
 
-    pages_set = parse_page_range(args.pages, total)
-    items = extract_text_items(reader, pages_set)
-    items = order_two_columns(items)
+        try:
+            pages_set = parse_page_range(args.pages, total)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
 
-    if args.sections:
-        sections = detect_sections(items)
-        matching = [s for s in sections if args.sections.lower() in s.title.lower()]
-        if matching:
-            filtered = []
-            for s in matching:
-                filtered.extend(items[s.start_line : s.end_line + 1])
-            items = filtered
+        all_lines = []
+        first_page_lines = []
+        word_count = 0
+        for page_num in sorted(pages_set):
+            if page_num < 1 or page_num > total:
+                continue
+            page = pdf.pages[page_num - 1]
+            words = extract_page_words(page, page_num)
+            ordered = order_lines(words, detect_gutter(words, page.width), page.width)
+            word_count += len(words)
+            all_lines.extend(ordered)
 
-    full_text = " ".join(item.text for item in items)
+        if 1 in pages_set or not pages_set:
+            first_words = extract_page_words(pdf.pages[0], 1) if total else []
+            first_page_lines = group_lines(first_words)
 
-    text_per_page = {}
-    for item in items:
-        key = str(item.page)
-        text_per_page.setdefault(key, []).append(item.text)
-    text_per_page = {k: " ".join(v) for k, v in text_per_page.items()}
+        metadata = extract_metadata(pdf, first_page_lines)
 
-    sections = detect_sections(items)
-    sections_out = [
-        {
-            "title": s.title,
-            "page": s.page,
-            "start_line": s.start_line,
-            "end_line": s.end_line,
-        }
-        for s in sections
-    ]
+        if word_count == 0:
+            print(
+                "Warning: no text layer found (scanned PDF?); consider OCR.",
+                file=sys.stderr,
+            )
 
-    figures, tables = detect_figures_tables(full_text)
-    equations = detect_equations(full_text)
+        if args.sections:
+            detected = detect_sections(all_lines)
+            matching = [s for s in detected if args.sections.lower() in s.title.lower()]
+            if matching:
+                filtered = []
+                for s in matching:
+                    filtered.extend(all_lines[s.start_line : s.end_line + 1])
+                all_lines = filtered
+
+        full_text = "\n\n".join(p.text for p in group_paragraphs(all_lines))
+
+        text_per_page = {}
+        page_lines = {}
+        for ln in all_lines:
+            page_lines.setdefault(ln.page, []).append(ln)
+        for page_num, plines in page_lines.items():
+            text_per_page[str(page_num)] = "\n\n".join(
+                p.text for p in group_paragraphs(plines)
+            )
+
+        sections = detect_sections(all_lines)
+        sections_out = [
+            {
+                "title": s.title,
+                "page": s.page,
+                "start_line": s.start_line,
+                "end_line": s.end_line,
+                "text": s.text,
+                "method": s.method,
+            }
+            for s in sections
+        ]
+
+        figures, tables, equations = detect_references(full_text)
 
     data = PaperData(
         metadata=metadata,
