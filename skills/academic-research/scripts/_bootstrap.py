@@ -12,10 +12,19 @@ def _create_venv(venv_dir, requirements):
         )
         sys.exit(1)
     print("[bootstrap] Creating virtual environment...", file=sys.stderr)
+    venv_python = venv_dir / "bin" / "python"
     try:
         subprocess.run(["uv", "venv", str(venv_dir)], check=True, capture_output=True)
         subprocess.run(
-            ["uv", "pip", "install", "-r", str(requirements)],
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(venv_python),
+                "-r",
+                str(requirements),
+            ],
             check=True,
             capture_output=True,
         )
