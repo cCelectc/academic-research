@@ -13,53 +13,17 @@ Usage:
 
 import argparse
 import json
-import os
 import re
-import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-VENV_DIR = SCRIPT_DIR / ".venv"
-VENV_PYTHON = VENV_DIR / "bin" / "python"
+from _bootstrap import ensure_venv
 
-DEPS = ["requests>=2.28", "pypdf>=5.0"]
-
-
-def bootstrap():
-    if VENV_DIR.exists():
-        return
-    print("[bootstrap] Creating virtual environment...", file=sys.stderr)
-    try:
-        subprocess.run(
-            ["uv", "venv", str(VENV_DIR)],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["uv", "pip", "install"] + DEPS,
-            check=True,
-            capture_output=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(VENV_DIR)],
-            check=True,
-        )
-        pip = str(VENV_DIR / "bin" / "pip")
-        subprocess.run([pip, "install"] + DEPS, check=True)
-    print("[bootstrap] Done.", file=sys.stderr)
-
-
-if not VENV_DIR.exists():
-    bootstrap()
-
-if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists():
-    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), __file__] + sys.argv[1:])
-
+ensure_venv(__file__)
 
 from pypdf import PdfReader
+
 
 # --- Section detection patterns ---
 SECTION_PATTERNS = [

@@ -11,54 +11,16 @@ Usage:
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 import time
-from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-VENV_DIR = SCRIPT_DIR / ".venv"
-VENV_PYTHON = VENV_DIR / "bin" / "python"
+from _bootstrap import ensure_venv
 
-
-DEPS = ["requests>=2.28", "pypdf>=5.0"]
-
-
-def bootstrap():
-    if VENV_DIR.exists():
-        return
-    print("[bootstrap] Creating virtual environment...", file=sys.stderr)
-    try:
-        subprocess.run(
-            ["uv", "venv", str(VENV_DIR)],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["uv", "pip", "install"] + DEPS,
-            check=True,
-            capture_output=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(VENV_DIR)],
-            check=True,
-        )
-        pip = str(VENV_DIR / "bin" / "pip")
-        subprocess.run([pip, "install"] + DEPS, check=True)
-    print("[bootstrap] Done.", file=sys.stderr)
-
-
-if not VENV_DIR.exists():
-    bootstrap()
-
-if sys.executable != str(VENV_PYTHON) and VENV_PYTHON.exists():
-    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), __file__] + sys.argv[1:])
-
+ensure_venv(__file__)
 
 import xml.etree.ElementTree as ET
 import requests
+
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -106,15 +68,23 @@ def search_arxiv(query, max_results):
 
         title = _sanitize_text(title_el.text) if title_el is not None else ""
         summary = _sanitize_text(summary_el.text) if summary_el is not None else ""
-        arxiv_id = id_el.text.strip().split("/abs/")[-1] if id_el is not None else ""
-        published = published_el.text.strip() if published_el is not None else ""
+        arxiv_id = (
+            id_el.text.strip().split("/abs/")[-1]
+            if id_el is not None and id_el.text
+            else ""
+        )
+        published = (
+            published_el.text.strip()
+            if published_el is not None and published_el.text
+            else ""
+        )
         year = int(published[:4]) if published else None
 
-        authors = [
-            a.find("atom:name", ARXIV_NS).text.strip()
-            for a in entry.findall("atom:author", ARXIV_NS)
-            if a.find("atom:name", ARXIV_NS) is not None
-        ]
+        authors = []
+        for a in entry.findall("atom:author", ARXIV_NS):
+            name_el = a.find("atom:name", ARXIV_NS)
+            if name_el is not None and name_el.text:
+                authors.append(name_el.text.strip())
 
         doi = None
         for link in entry.findall("atom:link", ARXIV_NS):
