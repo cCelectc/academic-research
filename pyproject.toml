@@ -27,3 +27,6 @@ line-length = 88
 
 [tool.ruff.lint]
 per-file-ignores = { "**/search.py" = ["E402"], "**/parse_pdf.py" = ["E402"], "**/download.py" = ["E402"] }
+
+[tool.ty.environment]
+extra-paths = ["skills/academic-research/scripts"]

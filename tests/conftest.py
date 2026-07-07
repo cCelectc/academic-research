@@ -1,19 +1,24 @@
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-SCRIPT = (
-    Path(__file__).resolve().parent.parent
-    / "skills"
-    / "academic-research"
-    / "scripts"
-    / "parse_pdf.py"
+SCRIPTS_DIR = (
+    Path(__file__).resolve().parent.parent / "skills" / "academic-research" / "scripts"
 )
+
+SCRIPT = SCRIPTS_DIR / "parse_pdf.py"
+
+sys.path.insert(0, str(SCRIPTS_DIR))
+
+_bootstrap_stub = types.ModuleType("_bootstrap")
+setattr(_bootstrap_stub, "ensure_venv", lambda *args, **kwargs: None)
+sys.modules.setdefault("_bootstrap", _bootstrap_stub)
 
 
 def run_parser(pdf_path, *args):
