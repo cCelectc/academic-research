@@ -1,6 +1,8 @@
 from conftest import (
+    make_arxiv_stamp,
     make_full_width_header,
     make_no_text,
+    make_noise_sections,
     make_repeated_figs,
     make_single_column,
     make_two_column,
@@ -100,3 +102,27 @@ def test_bad_page_range(tmp_path):
     proc = run_parser(pdf, "--pages", "abc")
     assert proc.returncode != 0
     assert "invalid page range" in proc.stderr
+
+
+def test_rotated_margin_stamp_dropped(tmp_path, parse):
+    import re
+
+    pdf = tmp_path / "stamp.pdf"
+    make_arxiv_stamp(pdf)
+    data, _ = parse(pdf)
+    assert "STAMPWORD" not in data["full_text"]
+    assert "Body content that should be extracted" in data["full_text"]
+    # in-content rotated axis label is kept (vertical order may be reversed)
+    letters = re.sub(r"[^A-Za-z]", "", data["full_text"])
+    assert "AXISLABEL" in letters or "AXISLABEL"[::-1] in letters
+
+
+def test_noise_lines_not_sections(tmp_path, parse):
+    pdf = tmp_path / "noise.pdf"
+    make_noise_sections(pdf)
+    data, _ = parse(pdf)
+    titles = [s["title"] for s in data["sections"]]
+    assert any(t.startswith("1 Introduction") for t in titles), titles
+    assert not any("=" in t for t in titles)
+    assert not any(t.startswith("2015") for t in titles)
+    assert not any(t[0].islower() for t in titles)

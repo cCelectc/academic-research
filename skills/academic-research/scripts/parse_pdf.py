@@ -28,7 +28,10 @@ import pdfplumber
 
 
 # --- Section detection ---
-SECTION_NUMBER_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[.)]?\s+\S")
+SECTION_NUMBER_RE = re.compile(
+    r"^\s*(?:\d{1,2}(?:\.\d{1,2})*[.)]?|[IVXLC]{1,4}[.)]|[A-Z][.)])\s+[A-Z]"
+)
+MATH_SYMBOLS = frozenset("−=+×≤≥→∇∈±·⊕⊗∑∏")
 SECTION_VOCAB = frozenset(
     {
         "abstract",
@@ -123,23 +126,31 @@ class PaperData:
 
 def extract_page_words(page, page_num):
     words = []
+    width = page.width or 0.0
+    margin = 0.07 * width
     raw = page.extract_words(
         x_tolerance=1.5,
         y_tolerance=2,
         keep_blank_chars=False,
         use_text_flow=False,
-        extra_attrs=["size", "fontname"],
+        extra_attrs=["size", "fontname", "upright"],
     )
     for w in raw:
         text = str(w.get("text", "")).strip()
         if not text:
             continue
+        x0 = float(w["x0"])
+        x1 = float(w["x1"])
+        if not bool(w.get("upright", True)) and width:
+            cx = (x0 + x1) / 2
+            if cx < margin or cx > width - margin:
+                continue
         words.append(
             Word(
                 text=text,
                 page=page_num,
-                x0=float(w["x0"]),
-                x1=float(w["x1"]),
+                x0=x0,
+                x1=x1,
                 top=float(w["top"]),
                 bottom=float(w["bottom"]),
                 size=float(w.get("size", 0.0) or 0.0),
@@ -332,6 +343,16 @@ def _strip_number(title):
 def classify_header(line, body_size, uniform):
     text = line.text.strip()
     wc = len(text.split())
+
+    # Conservative rejects: lines that cannot be genuine section headers.
+    if len(text) <= 2 or text[0].islower():
+        return False, "fallback"
+    if any(c in MATH_SYMBOLS for c in text):
+        return False, "fallback"
+    alpha = sum(c.isalpha() for c in text)
+    if alpha == 0 or alpha / len(text) < 0.5:
+        return False, "fallback"
+
     score = 0
     typo = False
     num = False

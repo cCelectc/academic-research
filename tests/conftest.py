@@ -138,3 +138,41 @@ def make_no_text(path):
     c.setFillColorRGB(0.2, 0.2, 0.2)
     c.rect(100, 400, 300, 200, fill=1, stroke=0)
     c.save()
+
+
+def make_arxiv_stamp(path):
+    c = canvas.Canvas(str(path), pagesize=letter)
+    _lines(c, 72, 700, ["Body content that should be extracted cleanly here."])
+    # rotated stamp in the far-left margin (should be dropped)
+    c.saveState()
+    c.translate(18, 300)
+    c.rotate(90)
+    c.setFont("Helvetica", 8)
+    c.drawString(0, 0, "arXiv:9999.55555v1 STAMPWORD")
+    c.restoreState()
+    # rotated axis label inside the content area (should be kept)
+    c.saveState()
+    c.translate(300, 450)
+    c.rotate(90)
+    c.setFont("Helvetica", 8)
+    c.drawString(0, 0, "AXISLABEL")
+    c.restoreState()
+    c.save()
+
+
+def make_noise_sections(path):
+    c = canvas.Canvas(str(path), pagesize=letter)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(72, 720, "1 Introduction")
+    _lines(
+        c,
+        72,
+        690,
+        [
+            "F = ma is the governing equation here.",
+            "2015 marked significant progress in the field.",
+            "the results were strong across all datasets.",
+        ],
+        leading=28,
+    )
+    c.save()
