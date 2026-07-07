@@ -7,7 +7,7 @@ research workflow.
 ## What it does
 
 - **Search** papers across arXiv, Semantic Scholar, DBLP, and CORE — all free, no API key needed
-- **Download** PDFs to `papers/` with clean filenames
+- **Download** PDFs with GB/T 7714-inspired structured filenames (`Author_Year_Title_Source-SourceID.pdf`) and an idempotent `papers/index.json` index
 - **Parse** PDFs deeply — metadata, sections, figures, equations, two-column layout
 - **Read** interactively — summarize, translate, explain formulas in plain language
 - **Discuss** research ideas with adaptive mentor/peer reviewer modes
@@ -40,7 +40,8 @@ skills/academic-research/
 ├── scripts/
 │   ├── pyproject.toml             # Dependencies (requests, pypdf)
 │   ├── search.py                  # Multi-source search CLI
-│   └── parse_pdf.py               # Deep PDF parser CLI
+│   ├── parse_pdf.py               # Deep PDF parser CLI
+│   └── download.py                # Download, structured naming, index.json
 └── references/
     ├── search-sources.md          # API details per source
     └── peer-review-guide.md       # Mentor/peer interaction modes

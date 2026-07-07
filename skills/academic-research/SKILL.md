@@ -57,20 +57,56 @@ For API details and rate limits, see `references/search-sources.md`.
 
 ### Downloading a paper
 
-After the user picks a paper by number, download it:
+Downloads are handled by `scripts/download.py`, which resolves the storage
+directory, builds a structured filename, downloads the PDF, and maintains a
+`papers/index.json` index.
+
+**Step 1 — resolve the storage directory.** Run:
 
 ```bash
-mkdir -p papers
-curl -L -o "papers/<Firstauthor>_<Year>_<TitleWords>.pdf" "<pdf_url>"
+python scripts/download.py resolve --choice auto
 ```
 
-Build the filename from the search result: `first_author_surname` + `_` + `year` +
-`_` + first three words of the title. Sanitize: uppercase first letter of each word,
-replace spaces with underscores, remove characters that aren't alphanumeric,
-underscores, hyphens, or dots.
+- Exit code `0`: the printed path is the directory to use (an existing
+  `papers/index.json` was found in the current directory — keep appending there).
+- Exit code `3` (`NEEDS_CHOICE`): no index exists yet. Ask the user where to
+  store papers, then re-run with their choice:
+  - Temporary workspace (cross-platform, cross-agent): `--choice temp`
+  - Current directory: `--choice cwd`
 
-If a paper has no `pdf_url` but has a DOI, try `curl -L "https://doi.org/<doi>"`
-as a fallback. Warn the user it may lead to a paywall.
+Remember the resolved path and reuse it for all downloads in this session.
+
+**Step 2 — fetch the paper.** Pass the chosen search result JSON object (from
+`search.py`) to the `fetch` subcommand:
+
+```bash
+python scripts/download.py fetch --dir "<resolved-dir>" --paper '<result-json>'
+```
+
+The script prints `{"filename": ..., "path": ..., "status": "downloaded"|"reused"}`.
+It builds the filename, downloads the PDF (reusing an existing file instead of
+overwriting), and idempotently updates `index.json`.
+
+**Filename format** (GB/T 7714-inspired structure):
+
+```
+{FirstAuthorSurname}_{Year}_{Title}_{Source}-{SourceID}.pdf
+```
+
+Example: `Vaswani_2017_Attention-Is-All-You-Need_arxiv-1706.03762.pdf`
+
+- Surname capitalized; title truncated at ~80 chars on word boundaries, words
+  joined by `-`; missing author → `Unknown`, missing year → `nd`.
+- Sanitization: spaces → `-`; only `A-Za-z0-9-_.` kept; `:` `/` `?` `,` etc.
+  removed; consecutive `-` collapsed. DOI does not go in the filename.
+- If `source_id` is missing, the sanitized DOI is used as the trailing segment;
+  if both are missing, the segment is omitted.
+
+**index.json** is a JSON array; each entry has: `filename`, `title`, `authors`,
+`year`, `source`, `source_id`, `doi`, `pdf_url`, `downloaded_at` (ISO 8601).
+Deduplication key is `source`+`source_id`, falling back to `doi`, then
+`filename` — re-downloading the same paper updates its entry instead of adding
+a duplicate.
 
 ## Parsing a Paper
 
@@ -164,8 +200,9 @@ mode only when the user invites it.
 
 ## Scripts Self-Bootstrap
 
-Both `scripts/search.py` and `scripts/parse_pdf.py` handle their own environment
-automatically. The first time you run either:
+All three scripts — `scripts/search.py`, `scripts/parse_pdf.py`, and
+`scripts/download.py` — handle their own environment automatically. The first
+time you run any of them:
 
 1. Checks if `uv` is available in PATH
 2. With uv: `uv venv .venv && uv pip install requests pypdf`
@@ -182,7 +219,8 @@ academic-research/
 ├── scripts/
 │   ├── pyproject.toml             (dependency declarations)
 │   ├── search.py                  (multi-source search CLI)
-│   └── parse_pdf.py               (deep PDF parser CLI)
+│   ├── parse_pdf.py               (deep PDF parser CLI)
+│   └── download.py                (download, structured naming, index maintenance)
 └── references/
     ├── search-sources.md          (API reference per source)
     └── peer-review-guide.md       (mentor/peer interaction modes)
