@@ -52,6 +52,7 @@ def _sanitize_text(text):
 
 
 def search_arxiv(query, max_results) -> list[PaperResult]:
+    """Search arXiv via its Atom API and return unified paper results."""
     params = {
         "search_query": f"all:{query}",
         "start": 0,
@@ -110,6 +111,7 @@ def search_arxiv(query, max_results) -> list[PaperResult]:
 
 
 def search_semantic_scholar(query, max_results) -> list[PaperResult]:
+    """Search the Semantic Scholar graph API and return unified results."""
     params = {
         "query": query,
         "limit": min(max_results, 100),
@@ -141,6 +143,10 @@ def search_semantic_scholar(query, max_results) -> list[PaperResult]:
 
 
 def search_dblp(query, max_results) -> list[PaperResult]:
+    """Search the DBLP publication API and return unified results.
+
+    Normalizes DBLP's single-vs-list author shapes into a list of names.
+    """
     params = {
         "q": query,
         "format": "json",
@@ -182,6 +188,7 @@ def search_dblp(query, max_results) -> list[PaperResult]:
 
 
 def search_core(query, max_results) -> list[PaperResult]:
+    """Search the CORE works API and return unified results."""
     params = {
         "q": query,
         "limit": str(min(max_results, 100)),
@@ -217,6 +224,7 @@ SOURCES = {
 
 
 def main():
+    """CLI entry point: query the chosen sources and print results."""
     parser = argparse.ArgumentParser(description="Multi-source academic paper search")
     parser.add_argument("--query", required=True, help="Search keywords")
     parser.add_argument(

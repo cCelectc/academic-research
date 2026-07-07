@@ -31,6 +31,7 @@ import requests
 
 
 def sanitize_segment(text):
+    """Sanitize a string into a filename-safe, hyphen-joined segment."""
     if not text:
         return ""
     text = re.sub(r"\s+", "-", str(text))
@@ -40,6 +41,10 @@ def sanitize_segment(text):
 
 
 def truncate_title(title, max_len=80):
+    """Sanitize and truncate a title on word boundaries up to ``max_len``.
+
+    Returns ``"Untitled"`` when the title is empty or has no usable words.
+    """
     if not title:
         return "Untitled"
     words = [sanitize_segment(w) for w in str(title).split()]
@@ -55,6 +60,7 @@ def truncate_title(title, max_len=80):
 
 
 def build_filename(paper: PaperResult):
+    """Build a GB/T 7714-inspired ``Author_Year_Title_Source.pdf`` filename."""
     author = sanitize_segment(paper.get("first_author_surname"))
     if not author or author.lower() == "unknown":
         author = "Unknown"
@@ -78,6 +84,7 @@ def build_filename(paper: PaperResult):
 
 
 def dedup_key(paper: PaperResult, filename):
+    """Return a stable dedup key: source id, else DOI, else filename."""
     if paper.get("source_id"):
         return f"{paper.get('source')}:{paper['source_id']}"
     if paper.get("doi"):
@@ -86,6 +93,7 @@ def dedup_key(paper: PaperResult, filename):
 
 
 def load_index(index_path):
+    """Load the papers index JSON, returning an empty list if missing/invalid."""
     if not index_path.exists():
         return []
     try:
@@ -96,6 +104,7 @@ def load_index(index_path):
 
 
 def build_entry(paper: PaperResult, filename):
+    """Build an index entry dict for a downloaded paper, with dedup key."""
     return {
         "filename": filename,
         "title": paper.get("title"),
@@ -111,6 +120,7 @@ def build_entry(paper: PaperResult, filename):
 
 
 def upsert_index(index, entry, key):
+    """Insert or replace the entry with matching ``_key`` in ``index``."""
     for i, existing in enumerate(index):
         if existing.get("_key") == key:
             index[i] = entry
@@ -120,6 +130,7 @@ def upsert_index(index, entry, key):
 
 
 def resolve_temp_dir():
+    """Return a writable temp papers dir, falling back to the home directory."""
     base = Path(tempfile.gettempdir()) / "academic-research" / "papers"
     try:
         base.mkdir(parents=True, exist_ok=True)
@@ -131,6 +142,10 @@ def resolve_temp_dir():
 
 
 def cmd_resolve(args):
+    """Resolve the papers directory per ``--choice`` and print it.
+
+    Returns an exit code: 0 on success, 3 when auto mode needs a user choice.
+    """
     if args.choice == "auto":
         if (Path("papers") / "index.json").exists():
             print(str(Path("papers").resolve()))
@@ -150,6 +165,7 @@ def cmd_resolve(args):
 
 
 def download_pdf(url, dest):
+    """Stream-download a PDF to ``dest``, removing a partial file on failure."""
     headers = {"User-Agent": "academic-research-skill/0.1"}
     try:
         with requests.get(url, stream=True, timeout=60, headers=headers) as resp:
@@ -164,6 +180,10 @@ def download_pdf(url, dest):
 
 
 def cmd_fetch(args):
+    """Download a paper (or reuse existing), update the index, print status.
+
+    Returns an exit code: 0 on success, 1 when the paper has no ``pdf_url``.
+    """
     paper: PaperResult = json.loads(args.paper)
     dest_dir = Path(args.dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -202,6 +222,7 @@ def cmd_fetch(args):
 
 
 def main():
+    """CLI entry point: dispatch the ``resolve`` or ``fetch`` subcommand."""
     parser = argparse.ArgumentParser(
         description="Download academic papers with structured filenames"
     )
