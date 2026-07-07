@@ -3,6 +3,23 @@ import json
 import download
 
 
+def _paper(**overrides):
+    base = {
+        "source": "",
+        "title": "",
+        "authors": [],
+        "year": None,
+        "abstract": None,
+        "pdf_url": None,
+        "doi": None,
+        "source_id": None,
+        "first_author_surname": "",
+        "citation_count": None,
+    }
+    base.update(overrides)
+    return base
+
+
 def test_sanitize_segment_empty():
     assert download.sanitize_segment("") == ""
     assert download.sanitize_segment(None) == ""
@@ -28,42 +45,38 @@ def test_truncate_title_word_boundary():
 
 
 def test_build_filename_basic():
-    paper = {
-        "first_author_surname": "smith",
-        "year": 2020,
-        "title": "Deep Nets",
-        "source": "arxiv",
-        "source_id": "1234.5678",
-    }
+    paper = _paper(
+        first_author_surname="smith",
+        year=2020,
+        title="Deep Nets",
+        source="arxiv",
+        source_id="1234.5678",
+    )
     assert download.build_filename(paper) == "Smith_2020_Deep-Nets_arxiv-1234.5678.pdf"
 
 
 def test_build_filename_missing_year_and_author():
-    paper = {
-        "first_author_surname": "unknown",
-        "title": "Study",
-        "source": "core",
-    }
+    paper = _paper(first_author_surname="unknown", title="Study", source="core")
     assert download.build_filename(paper) == "Unknown_nd_Study.pdf"
 
 
 def test_build_filename_doi_when_no_source_id():
-    paper = {
-        "first_author_surname": "Roe",
-        "year": 2019,
-        "title": "Work",
-        "source": "dblp",
-        "doi": "10.1000/xyz",
-    }
+    paper = _paper(
+        first_author_surname="Roe",
+        year=2019,
+        title="Work",
+        source="dblp",
+        doi="10.1000/xyz",
+    )
     assert download.build_filename(paper) == "Roe_2019_Work_10.1000-xyz.pdf"
 
 
 def test_dedup_key_variants():
     assert (
-        download.dedup_key({"source": "arxiv", "source_id": "1"}, "f.pdf") == "arxiv:1"
+        download.dedup_key(_paper(source="arxiv", source_id="1"), "f.pdf") == "arxiv:1"
     )
-    assert download.dedup_key({"doi": "10.1/x"}, "f.pdf") == "doi:10.1/x"
-    assert download.dedup_key({}, "f.pdf") == "file:f.pdf"
+    assert download.dedup_key(_paper(doi="10.1/x"), "f.pdf") == "doi:10.1/x"
+    assert download.dedup_key(_paper(), "f.pdf") == "file:f.pdf"
 
 
 def test_upsert_index_overwrite_and_append():
@@ -86,15 +99,14 @@ def test_load_index_corrupt(tmp_path):
 
 
 def test_build_entry_shape():
-    paper = {
-        "title": "T",
-        "authors": ["Jane Roe"],
-        "year": 2021,
-        "source": "arxiv",
-        "source_id": "1.2",
-        "doi": None,
-        "pdf_url": "http://p",
-    }
+    paper = _paper(
+        title="T",
+        authors=["Jane Roe"],
+        year=2021,
+        source="arxiv",
+        source_id="1.2",
+        pdf_url="http://p",
+    )
     entry = download.build_entry(paper, "f.pdf")
     assert entry["filename"] == "f.pdf"
     assert entry["_key"] == "arxiv:1.2"

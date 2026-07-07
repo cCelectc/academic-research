@@ -21,6 +21,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from paper import PaperResult
+
 from _bootstrap import ensure_venv
 
 ensure_venv(__file__)
@@ -52,7 +54,7 @@ def truncate_title(title, max_len=80):
     return result
 
 
-def build_filename(paper):
+def build_filename(paper: PaperResult):
     author = sanitize_segment(paper.get("first_author_surname"))
     if not author or author.lower() == "unknown":
         author = "Unknown"
@@ -75,7 +77,7 @@ def build_filename(paper):
     return "_".join(parts) + ".pdf"
 
 
-def dedup_key(paper, filename):
+def dedup_key(paper: PaperResult, filename):
     if paper.get("source_id"):
         return f"{paper.get('source')}:{paper['source_id']}"
     if paper.get("doi"):
@@ -93,7 +95,7 @@ def load_index(index_path):
     return data if isinstance(data, list) else []
 
 
-def build_entry(paper, filename):
+def build_entry(paper: PaperResult, filename):
     return {
         "filename": filename,
         "title": paper.get("title"),
@@ -162,7 +164,7 @@ def download_pdf(url, dest):
 
 
 def cmd_fetch(args):
-    paper = json.loads(args.paper)
+    paper: PaperResult = json.loads(args.paper)
     dest_dir = Path(args.dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     filename = build_filename(paper)

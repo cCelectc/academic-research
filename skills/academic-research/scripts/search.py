@@ -14,6 +14,8 @@ import json
 import sys
 import time
 
+from paper import PaperResult, build_result
+
 from _bootstrap import ensure_venv
 
 ensure_venv(__file__)
@@ -49,7 +51,7 @@ def _sanitize_text(text):
     return text.strip().replace("\n", " ")
 
 
-def search_arxiv(query, max_results):
+def search_arxiv(query, max_results) -> list[PaperResult]:
     params = {
         "search_query": f"all:{query}",
         "start": 0,
@@ -93,23 +95,21 @@ def search_arxiv(query, max_results):
                 doi = href.split("doi.org/")[-1]
 
         results.append(
-            {
-                "source": "arxiv",
-                "title": title,
-                "authors": authors,
-                "year": year,
-                "abstract": summary,
-                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}" if arxiv_id else None,
-                "doi": doi,
-                "source_id": arxiv_id,
-                "first_author_surname": _extract_surname(authors),
-                "citation_count": None,
-            }
+            build_result(
+                source="arxiv",
+                title=title,
+                authors=authors,
+                year=year,
+                abstract=summary,
+                pdf_url=f"https://arxiv.org/pdf/{arxiv_id}" if arxiv_id else None,
+                doi=doi,
+                source_id=arxiv_id,
+            )
         )
     return results
 
 
-def search_semantic_scholar(query, max_results):
+def search_semantic_scholar(query, max_results) -> list[PaperResult]:
     params = {
         "query": query,
         "limit": min(max_results, 100),
@@ -125,23 +125,22 @@ def search_semantic_scholar(query, max_results):
         pdf_url = oa.get("url") if oa else None
         doi = (paper.get("externalIds") or {}).get("DOI")
         results.append(
-            {
-                "source": "semantic_scholar",
-                "title": paper.get("title", ""),
-                "authors": authors,
-                "year": paper.get("year"),
-                "abstract": (paper.get("abstract") or ""),
-                "pdf_url": pdf_url,
-                "doi": doi,
-                "source_id": paper.get("paperId"),
-                "first_author_surname": _extract_surname(authors),
-                "citation_count": paper.get("citationCount"),
-            }
+            build_result(
+                source="semantic_scholar",
+                title=paper.get("title", ""),
+                authors=authors,
+                year=paper.get("year"),
+                abstract=(paper.get("abstract") or ""),
+                pdf_url=pdf_url,
+                doi=doi,
+                source_id=paper.get("paperId"),
+                citation_count=paper.get("citationCount"),
+            )
         )
     return results
 
 
-def search_dblp(query, max_results):
+def search_dblp(query, max_results) -> list[PaperResult]:
     params = {
         "q": query,
         "format": "json",
@@ -168,23 +167,21 @@ def search_dblp(query, max_results):
             authors = []
 
         results.append(
-            {
-                "source": "dblp",
-                "title": title,
-                "authors": authors,
-                "year": year,
-                "abstract": None,
-                "pdf_url": None,
-                "doi": info.get("doi"),
-                "source_id": info.get("key"),
-                "first_author_surname": _extract_surname(authors),
-                "citation_count": None,
-            }
+            build_result(
+                source="dblp",
+                title=title,
+                authors=authors,
+                year=year,
+                abstract=None,
+                pdf_url=None,
+                doi=info.get("doi"),
+                source_id=info.get("key"),
+            )
         )
     return results
 
 
-def search_core(query, max_results):
+def search_core(query, max_results) -> list[PaperResult]:
     params = {
         "q": query,
         "limit": str(min(max_results, 100)),
@@ -197,18 +194,16 @@ def search_core(query, max_results):
         authors = [a.get("name", "") for a in work.get("authors", [])]
         download_url = work.get("downloadUrl") or work.get("fullText")
         results.append(
-            {
-                "source": "core",
-                "title": work.get("title", ""),
-                "authors": authors,
-                "year": work.get("yearPublished"),
-                "abstract": (work.get("abstract") or ""),
-                "pdf_url": download_url,
-                "doi": work.get("doi"),
-                "source_id": str(work.get("id", "")),
-                "first_author_surname": _extract_surname(authors),
-                "citation_count": None,
-            }
+            build_result(
+                source="core",
+                title=work.get("title", ""),
+                authors=authors,
+                year=work.get("yearPublished"),
+                abstract=(work.get("abstract") or ""),
+                pdf_url=download_url,
+                doi=work.get("doi"),
+                source_id=str(work.get("id", "")),
+            )
         )
     return results
 
