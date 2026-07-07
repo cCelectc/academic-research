@@ -516,6 +516,65 @@ def parse_page_range(raw, total):
 # --- Main ---
 
 
+def extract_document_lines(pdf, pages_set):
+    all_lines = []
+    word_count = 0
+    total = len(pdf.pages)
+    for page_num in sorted(pages_set):
+        if page_num < 1 or page_num > total:
+            continue
+        page = pdf.pages[page_num - 1]
+        words = extract_page_words(page, page_num)
+        ordered = order_lines(words, detect_gutter(words, page.width), page.width)
+        word_count += len(words)
+        all_lines.extend(ordered)
+    return all_lines, word_count
+
+
+def collect_first_page_lines(pdf, pages_set, total):
+    if 1 in pages_set or not pages_set:
+        first_words = extract_page_words(pdf.pages[0], 1) if total else []
+        return group_lines(first_words)
+    return []
+
+
+def filter_lines_by_section(all_lines, section_query):
+    detected = detect_sections(all_lines)
+    matching = [s for s in detected if section_query.lower() in s.title.lower()]
+    if matching:
+        filtered = []
+        for s in matching:
+            filtered.extend(all_lines[s.start_line : s.end_line + 1])
+        return filtered
+    return all_lines
+
+
+def build_text_per_page(all_lines):
+    text_per_page = {}
+    page_lines = {}
+    for ln in all_lines:
+        page_lines.setdefault(ln.page, []).append(ln)
+    for page_num, plines in page_lines.items():
+        text_per_page[str(page_num)] = "\n\n".join(
+            p.text for p in group_paragraphs(plines)
+        )
+    return text_per_page
+
+
+def sections_to_dicts(sections):
+    return [
+        {
+            "title": s.title,
+            "page": s.page,
+            "start_line": s.start_line,
+            "end_line": s.end_line,
+            "text": s.text,
+            "method": s.method,
+        }
+        for s in sections
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deep PDF parser for academic papers")
     parser.add_argument("--pdf", required=True, help="Path to the PDF file")
@@ -546,21 +605,8 @@ def main():
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-        all_lines = []
-        first_page_lines = []
-        word_count = 0
-        for page_num in sorted(pages_set):
-            if page_num < 1 or page_num > total:
-                continue
-            page = pdf.pages[page_num - 1]
-            words = extract_page_words(page, page_num)
-            ordered = order_lines(words, detect_gutter(words, page.width), page.width)
-            word_count += len(words)
-            all_lines.extend(ordered)
-
-        if 1 in pages_set or not pages_set:
-            first_words = extract_page_words(pdf.pages[0], 1) if total else []
-            first_page_lines = group_lines(first_words)
+        all_lines, word_count = extract_document_lines(pdf, pages_set)
+        first_page_lines = collect_first_page_lines(pdf, pages_set, total)
 
         metadata = extract_metadata(pdf, first_page_lines)
 
@@ -571,37 +617,13 @@ def main():
             )
 
         if args.sections:
-            detected = detect_sections(all_lines)
-            matching = [s for s in detected if args.sections.lower() in s.title.lower()]
-            if matching:
-                filtered = []
-                for s in matching:
-                    filtered.extend(all_lines[s.start_line : s.end_line + 1])
-                all_lines = filtered
+            all_lines = filter_lines_by_section(all_lines, args.sections)
 
         full_text = "\n\n".join(p.text for p in group_paragraphs(all_lines))
 
-        text_per_page = {}
-        page_lines = {}
-        for ln in all_lines:
-            page_lines.setdefault(ln.page, []).append(ln)
-        for page_num, plines in page_lines.items():
-            text_per_page[str(page_num)] = "\n\n".join(
-                p.text for p in group_paragraphs(plines)
-            )
+        text_per_page = build_text_per_page(all_lines)
 
-        sections = detect_sections(all_lines)
-        sections_out = [
-            {
-                "title": s.title,
-                "page": s.page,
-                "start_line": s.start_line,
-                "end_line": s.end_line,
-                "text": s.text,
-                "method": s.method,
-            }
-            for s in sections
-        ]
+        sections_out = sections_to_dicts(detect_sections(all_lines))
 
         figures, tables, equations = detect_references(full_text)
 
