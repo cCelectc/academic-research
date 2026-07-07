@@ -49,7 +49,7 @@ skills/academic-research/
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.12+
 - `uv` recommended (auto-falls back to `venv + pip`)
 - `curl` or `wget` for downloads
 - Internet access for API calls

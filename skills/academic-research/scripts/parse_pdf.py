@@ -674,6 +674,9 @@ def main():
     try:
         pdf = pdfplumber.open(str(pdf_path))
     except Exception as e:
+        # pdfplumber raises heterogeneous errors on bad input (PDFSyntaxError,
+        # ValueError, OSError, etc.); catch broadly to emit one clean message
+        # instead of a traceback.
         print(f"Error: cannot open PDF: {e}", file=sys.stderr)
         sys.exit(1)
 
