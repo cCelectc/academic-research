@@ -14,7 +14,7 @@ import json
 import sys
 import time
 
-from paper import PaperResult, build_result
+from paper import PaperResult, build_result, user_agent
 
 from _bootstrap import ensure_venv
 
@@ -29,7 +29,7 @@ S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 DBLP_API = "https://dblp.org/search/publ/api"
 CORE_API = "https://api.core.ac.uk/v3/search/works"
 
-USER_AGENT = "academic-research-skill/0.1 (mailto:research@example.com)"
+USER_AGENT = user_agent()
 HEADERS = {"User-Agent": USER_AGENT}
 
 ARXIV_NS = {

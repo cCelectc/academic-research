@@ -21,7 +21,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from paper import PaperResult
+from paper import PaperResult, user_agent
 
 from _bootstrap import ensure_venv
 
@@ -166,7 +166,7 @@ def cmd_resolve(args):
 
 def download_pdf(url, dest):
     """Stream-download a PDF to ``dest``, removing a partial file on failure."""
-    headers = {"User-Agent": "academic-research-skill/0.1"}
+    headers = {"User-Agent": user_agent()}
     try:
         with requests.get(url, stream=True, timeout=60, headers=headers) as resp:
             resp.raise_for_status()

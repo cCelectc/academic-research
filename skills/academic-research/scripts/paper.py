@@ -5,7 +5,17 @@ Defines the ``PaperResult`` structure produced by every search source in
 single place.
 """
 
+import os
 from typing import TypedDict
+
+DEFAULT_USER_AGENT = (
+    "academic-research-skill/0.1 (+https://github.com/cCelectc/academic-research)"
+)
+
+
+def user_agent() -> str:
+    """Return the HTTP User-Agent, overridable via ``ACADEMIC_RESEARCH_UA``."""
+    return os.environ.get("ACADEMIC_RESEARCH_UA", DEFAULT_USER_AGENT)
 
 
 class PaperResult(TypedDict):

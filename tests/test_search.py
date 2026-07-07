@@ -1,3 +1,4 @@
+import paper
 import search
 
 
@@ -175,3 +176,11 @@ def test_search_core_parses(monkeypatch):
     assert r["source_id"] == "99"
     assert r["citation_count"] is None
     assert r["first_author_surname"] == "Lee"
+
+
+def test_user_agent_default_and_override(monkeypatch):
+    monkeypatch.delenv("ACADEMIC_RESEARCH_UA", raising=False)
+    assert paper.user_agent() == paper.DEFAULT_USER_AGENT
+    assert "example.com" not in paper.user_agent()
+    monkeypatch.setenv("ACADEMIC_RESEARCH_UA", "custom/1.0")
+    assert paper.user_agent() == "custom/1.0"
