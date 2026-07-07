@@ -71,6 +71,8 @@ EQUATION_RE = re.compile(r"(?:Eq(?:uation)?\s*\(?\s*(\d+)\s*\)?)", re.IGNORECASE
 
 @dataclass
 class Word:
+    """A single extracted word with its page, bounding box, and font info."""
+
     text: str
     page: int
     x0: float
@@ -83,6 +85,8 @@ class Word:
 
 @dataclass
 class Line:
+    """A text line assembled from words on the same row of a page."""
+
     text: str
     page: int
     x0: float
@@ -96,12 +100,16 @@ class Line:
 
 @dataclass
 class Paragraph:
+    """A paragraph of text grouped from consecutive lines on one page."""
+
     text: str
     page: int
 
 
 @dataclass
 class Section:
+    """A detected document section with its title, span, text, and method."""
+
     title: str
     page: int
     start_line: int
@@ -112,6 +120,8 @@ class Section:
 
 @dataclass
 class PaperData:
+    """The full parsed result: metadata, text, sections, and references."""
+
     metadata: dict = field(default_factory=dict)
     full_text: str = ""
     text_per_page: dict = field(default_factory=dict)
@@ -125,6 +135,11 @@ class PaperData:
 
 
 def extract_page_words(page, page_num):
+    """Extract words from a page, dropping rotated words in the margins.
+
+    Returns a list of ``Word`` objects; sideways words whose center falls in
+    the left/right margin band are skipped (e.g. arXiv stamps).
+    """
     words = []
     width = page.width or 0.0
     margin = 0.07 * width
@@ -164,6 +179,7 @@ def extract_page_words(page, page_num):
 
 
 def cluster_rows(words, y_tol=3.0):
+    """Group words into rows by vertical position within ``y_tol`` on a page."""
     if not words:
         return []
 
@@ -183,6 +199,7 @@ def cluster_rows(words, y_tol=3.0):
 
 
 def line_from_words(words):
+    """Merge a row of words into a single ``Line`` with aggregated geometry."""
     group = sorted(words, key=lambda w: w.x0)
     sizes = [w.size for w in group if w.size > 0]
     fontnames = [w.fontname for w in group if w.fontname]
@@ -199,6 +216,7 @@ def line_from_words(words):
 
 
 def group_lines(words, y_tol=3.0):
+    """Cluster words into rows and build a ``Line`` for each row."""
     return [line_from_words(row) for row in cluster_rows(words, y_tol)]
 
 
@@ -206,6 +224,11 @@ def group_lines(words, y_tol=3.0):
 
 
 def detect_gutter(words, page_width):
+    """Detect a two-column gutter x-position, or ``None`` for single column.
+
+    Scans each row for a wide central gap; returns the median gap center when
+    enough rows agree, otherwise ``None``.
+    """
     rows = cluster_rows(words)
     if len(rows) < 3 or page_width <= 0:
         return None
@@ -232,6 +255,12 @@ def detect_gutter(words, page_width):
 
 
 def order_lines(words, gutter, page_width):
+    """Order lines in reading order, honoring two-column layout if present.
+
+    With no gutter, falls back to simple top-to-bottom grouping. With a gutter,
+    emits left-column then right-column lines per band, keeping full-width
+    spanning lines as separators.
+    """
     if not words:
         return []
     if gutter is None:
@@ -282,6 +311,11 @@ def order_lines(words, gutter, page_width):
 
 
 def group_paragraphs(lines, gap_factor=1.5):
+    """Group ordered lines into paragraphs by vertical gap and page breaks.
+
+    A new paragraph starts when the vertical gap exceeds ``gap_factor`` times
+    the median gap, the line moves upward, or the page changes.
+    """
     if not lines:
         return []
 
@@ -321,6 +355,7 @@ def group_paragraphs(lines, gap_factor=1.5):
 
 
 def modal_size(lines):
+    """Return the most common (text-weighted) rounded font size across lines."""
     weights = Counter()
     for ln in lines:
         if ln.size > 0:
@@ -331,6 +366,7 @@ def modal_size(lines):
 
 
 def fonts_uniform(lines):
+    """Return True if lines share one font size and use no bold faces."""
     sizes = {round(ln.size) for ln in lines if ln.size > 0}
     bold = any(kw in ln.fontname.lower() for ln in lines for kw in ("bold", "black"))
     return len(sizes) <= 1 and not bold
@@ -341,6 +377,12 @@ def _strip_number(title):
 
 
 def classify_header(line, body_size, uniform):
+    """Decide whether a line is a section header and by which method.
+
+    Returns ``(is_header, method)`` where method is ``"typographic"``,
+    ``"numbered"``, or ``"fallback"``. Scores typography (size/bold), numbering,
+    brevity, all-caps, and vocabulary; rejects lines that cannot be headers.
+    """
     text = line.text.strip()
     wc = len(text.split())
 
@@ -391,6 +433,11 @@ def classify_header(line, body_size, uniform):
 
 
 def detect_sections(lines):
+    """Detect sections from lines and return a list of ``Section`` objects.
+
+    Classifies each line as a header, then slices the body between consecutive
+    headers, grouping each slice into paragraph text.
+    """
     if not lines:
         return []
 
@@ -425,6 +472,12 @@ def detect_sections(lines):
 
 
 def detect_references(text):
+    """Find deduplicated figure, table, and equation references in text.
+
+    Returns three lists of ``{"number", "position"}`` dicts (figures, tables,
+    equations), each keeping the first occurrence position per number.
+    """
+
     def collect(regex):
         seen = {}
         for m in regex.finditer(text):
@@ -440,6 +493,7 @@ def detect_references(text):
 
 
 def extract_year(meta, first_text):
+    """Extract a publication year from PDF metadata dates or a copyright line."""
     date = (
         meta.get("CreationDate")
         or meta.get("/CreationDate")
@@ -459,6 +513,11 @@ def extract_year(meta, first_text):
 
 
 def extract_metadata(pdf, first_page_lines):
+    """Collect metadata from the PDF info dict and the first page.
+
+    Reads title/author/creator/etc., then augments with DOI, year, and a
+    heuristic title from the largest first-page font when no title is present.
+    """
     meta = {}
     pdf_meta = pdf.metadata or {}
     for key in ("Title", "Author", "Creator", "Producer", "Subject"):
@@ -494,6 +553,11 @@ def extract_metadata(pdf, first_page_lines):
 
 
 def parse_page_range(raw, total):
+    """Parse a page-range string like ``"3-5"`` or ``"3,5,7"`` into a page set.
+
+    Empty input selects all pages 1..total. Out-of-range pages are dropped;
+    a malformed part raises ``ValueError``.
+    """
     if not raw:
         return set(range(1, total + 1))
     pages = set()
@@ -517,6 +581,11 @@ def parse_page_range(raw, total):
 
 
 def extract_document_lines(pdf, pages_set):
+    """Extract ordered lines for the selected pages and count words.
+
+    Returns ``(all_lines, word_count)``; each in-range page is word-extracted
+    and ordered by ``order_lines`` before being appended.
+    """
     all_lines = []
     word_count = 0
     total = len(pdf.pages)
@@ -532,6 +601,10 @@ def extract_document_lines(pdf, pages_set):
 
 
 def collect_first_page_lines(pdf, pages_set, total):
+    """Return grouped lines of page 1 when it is in scope, else an empty list.
+
+    Used to feed first-page heuristics (title/DOI/year) into metadata.
+    """
     if 1 in pages_set or not pages_set:
         first_words = extract_page_words(pdf.pages[0], 1) if total else []
         return group_lines(first_words)
@@ -539,6 +612,11 @@ def collect_first_page_lines(pdf, pages_set, total):
 
 
 def filter_lines_by_section(all_lines, section_query):
+    """Keep only lines within sections whose title matches ``section_query``.
+
+    Case-insensitive substring match; returns all lines unchanged when nothing
+    matches.
+    """
     detected = detect_sections(all_lines)
     matching = [s for s in detected if section_query.lower() in s.title.lower()]
     if matching:
@@ -550,6 +628,7 @@ def filter_lines_by_section(all_lines, section_query):
 
 
 def build_text_per_page(all_lines):
+    """Map page number (str) to paragraph-grouped text for that page."""
     text_per_page = {}
     page_lines = {}
     for ln in all_lines:
@@ -562,6 +641,7 @@ def build_text_per_page(all_lines):
 
 
 def sections_to_dicts(sections):
+    """Convert ``Section`` objects into JSON-serializable dicts."""
     return [
         {
             "title": s.title,
@@ -576,6 +656,7 @@ def sections_to_dicts(sections):
 
 
 def main():
+    """CLI entry point: parse a PDF and print the extracted data as JSON."""
     parser = argparse.ArgumentParser(description="Deep PDF parser for academic papers")
     parser.add_argument("--pdf", required=True, help="Path to the PDF file")
     parser.add_argument("--pages", help="Page range, e.g. '3-5' or '3,5,7'")
